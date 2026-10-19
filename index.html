@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Wall Climber</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+        body { background-color: #1a1a2e; overflow: hidden; font-family: Arial, sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        #ui {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        #score-board {
+            position: absolute; top: 30px; color: white; font-size: 30px; font-weight: bold;
+            text-shadow: 0 0 10px rgba(255,255,255,0.5);
+        }
+        #game-over {
+            display: none; background: rgba(0,0,0,0.85); padding: 30px 50px; border-radius: 20px;
+            text-align: center; border: 2px solid #00d2ff; pointer-events: auto; box-shadow: 0 0 20px #00d2ff;
+        }
+        #game-over h2 { color: #ff4757; font-size: 36px; margin-bottom: 10px; }
+        #game-over p { color: white; font-size: 20px; margin-bottom: 20px; }
+        #restart-btn {
+            padding: 15px 30px; font-size: 20px; font-weight: bold; background: #00d2ff;
+            color: #1a1a2e; border: none; border-radius: 10px; cursor: pointer; pointer-events: auto;
+        }
+        #restart-btn:active { transform: scale(0.95); }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui">
+        <div id="score-board">0</div>
+        <div id="game-over">
+            <h2>УПС!</h2>
+            <p>Ты упал...</p>
+            <button id="restart-btn">ЗАНОВО</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score-board');
+        const gameOverEl = document.getElementById('game-over');
+        const restartBtn = document.getElementById('restart-btn');
+
+        let width, height;
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Настройки игры
+        const gravity = 0.6;
+        const jumpForceX = 7;  // Сила прыжка вбок
+        const jumpForceY = -13; // Сила прыжка вверх
+        const wallWidth = 40;   // Ширина стен
+
+        let player = {
+            x: 0, y: 0, radius: 15,
+            vx: 0, vy: 0,
+            color: '#00d2ff'
+        };
+
+        let platforms = [];
+        let spikes = [];
+        let cameraY = 0;
+        let score = 0;
+        let gameState = 'playing'; // playing, gameover
+
+        // Инициализация / Сброс
+        function resetGame() {
+            player.x = width / 2;
+            player.y = height - 100;
+            player.vx = 0;
+            player.vy = 0;
+            cameraY = 0;
+            score = 0;
+            platforms = [];
+            spikes = [];
+            
+            // Стартовая платформа
+            platforms.push({ x: wallWidth, y: height - 50, w: width - wallWidth * 2, h: 20, type: 'normal' });
+            
+            // Генерируем платформы наверх
+            generateLevel(height - 250);
+
+            gameState = 'playing';
+            gameOverEl.style.display = 'none';
+            scoreEl.innerText = "0";
+            update();
+        }
+
+        // Генерация уровня
+        let lastPlatformY = height - 50;
+        function generateLevel(upToY) {
+            while (lastPlatformY > upToY) {
+                lastPlatformY -= Math.random() * 80 + 100; // Расстояние между платформами
+                
+                // Случайно выбираем сторону (левая или правая стена)
+                let isLeft = Math.random() > 0.5;
+                let platWidth = Math.random() * 60 + 50;
+                let platX = isLeft ? wallWidth : width - wallWidth - platWidth;
+
+                platforms.push({ x: platX, y: lastPlatformY, w: platWidth, h: 15, type: 'normal' });
+
+                // Иногда добавляем шипы на стене рядом с платформой
+                if (Math.random() > 0.6) {
+                    let spikeY = lastPlatformY - 30;
+                    if (isLeft) {
+                        spikes.push({ x: wallWidth, y: spikeY, w: 20, h: 20, dir: 'right' });
+                    } else {
+                        spikes.push({ x: width - wallWidth - 20, y: spikeY, w: 20, h: 20, dir: 'left' });
+                    }
+                }
+            }
+        }
+
+        // Управление (тап по экрану)
+        function jump(e) {
+            if (e) e.preventDefault();
+            if (gameState !== 'playing') return;
+
+            // Прыгаем в противоположную сторону от текущей стены
+            if (player.x < width / 2) {
+                player.vx = jumpForceX;
+            } else {
+                player.vx = -jumpForceX;
+            }
+            player.vy = jumpForceY;
+        }
+
+        window.addEventListener('touchstart', jump, { passive: false });
+        window.addEventListener('mousedown', jump);
+        restartBtn.addEventListener('click', resetGame);
+
+        // Обновление физики
+        function update() {
+            if (gameState !== 'playing') return;
+
+            // Гравитация
+            player.vy += gravity;
+            player.y += player.vy;
+            player.x += player.vx;
+
+            // Столкновение со стенами
+            if (player.x - player.radius < wallWidth) {
+                player.x = wallWidth + player.radius;
+                player.vx = 0;
+                // Автоматический отскок от стены, если падаем
+                if (player.vy > 0) player.vx = jumpForceX;
+            } else if (player.x + player.radius > width - wallWidth) {
+                player.x = width - wallWidth - player.radius;
+                player.vx = 0;
+                if (player.vy > 0) player.vx = -jumpForceX;
+            }
+
+            // Камера следует за игроком вверх
+            if (player.y < height / 2) {
+                let diff = height / 2 - player.y;
+                player.y += diff;
+                cameraY -= diff;
+                score += Math.floor(diff);
+                scoreEl.innerText = score;
+                
+                // Двигаем платформы и шипы вниз (эффект камеры)
+                platforms.forEach(p => p.y += diff);
+                spikes.forEach(s => s.y += diff);
+            }
+
+            // Генерация новых платформ, если поднимаемся высоко
+            if (cameraY < lastPlatformY - height) {
+                generateLevel(cameraY - height);
+            }
+
+            // Проверка столкновения с платформами (только если падаем вниз)
+            if (player.vy > 0) {
+                platforms.forEach(p => {
+                    if (player.x + player.radius > p.x && player.x - player.radius < p.x + p.w) {
+                        if (player.y + player.radius > p.y && player.y - player.radius < p.y + p.h) {
+                            // Приземлились
+                            player.y = p.y - player.radius;
+                            player.vy = jumpForceY; // Автоматический прыжок вверх
+                            
+                            // Меняем направление
+                            if (player.x < width / 2) player.vx = jumpForceX;
+                            else player.vx = -jumpForceX;
+                        }
+                    }
+                });
+            }
+
+            // Проверка столкновения с шипами
+            spikes.forEach(s => {
+                if (player.x + player.radius > s.x && player.x - player.radius < s.x + s.w &&
+                    player.y + player.radius > s.y && player.y - player.radius < s.y + s.h) {
+                    die();
+                }
+            });
+
+            // Проверка падения вниз
+            if (player.y > height + 50) {
+                die();
+            }
+
+            // Удаляем старые платформы (оптимизация)
+            platforms = platforms.filter(p => p.y < height + 100);
+            spikes = spikes.filter(s => s.y < height + 100);
+
+            draw();
+            requestAnimationFrame(update);
+        }
+
+        function die() {
+            gameState = 'gameover';
+            gameOverEl.style.display = 'block';
+        }
+
+        // Отрисовка
+        function draw() {
+            // Очистка фона
+            ctx.fillStyle = '#1a1a2e';
+            ctx.fillRect(0, 0, width, height);
+
+            // Звезды на фоне (для красоты)
+            ctx.fillStyle = 'rgba(255,255,255,0.2)';
+            for(let i=0; i<50; i++) {
+                let sx = (i * 137) % width;
+                let sy = (i * 313 + cameraY * 0.2) % height;
+                ctx.fillRect(sx, sy, 2, 2);
+            }
+
+            // Стены
+            ctx.fillStyle = '#16213e';
+            ctx.fillRect(0, 0, wallWidth, height);
+            ctx.fillRect(width - wallWidth, 0, wallWidth, height);
+
+            // Свечение стен
+            let gradientL = ctx.createLinearGradient(wallWidth, 0, wallWidth + 20, 0);
+            gradientL.addColorStop(0, 'rgba(0, 210, 255, 0.3)');
+            gradientL.addColorStop(1, 'rgba(0, 210, 255, 0)');
+            ctx.fillStyle = gradientL;
+            ctx.fillRect(wallWidth, 0, 20, height);
+
+            let gradientR = ctx.createLinearGradient(width - wallWidth, 0, width - wallWidth - 20, 0);
+            gradientR.addColorStop(0, 'rgba(0, 210, 255, 0.3)');
+            gradientR.addColorStop(1, 'rgba(0, 210, 255, 0)');
+            ctx.fillStyle = gradientR;
+            ctx.fillRect(width - wallWidth - 20, 0, 20, height);
+
+            // Платформы
+            ctx.fillStyle = '#0f3460';
+            platforms.forEach(p => {
+                ctx.fillRect(p.x, p.y, p.w, p.h);
+                // Блик на платформе
+                ctx.fillStyle = 'rgba(255,255,255,0.1)';
+                ctx.fillRect(p.x, p.y, p.w, 3);
+                ctx.fillStyle = '#0f3460';
+            });
+
+            // Шипы
+            ctx.fillStyle = '#ff4757';
+            spikes.forEach(s => {
+                ctx.beginPath();
+                if (s.dir === 'right') {
+                    ctx.moveTo(s.x, s.y);
+                    ctx.lineTo(s.x + s.w, s.y + s.h / 2);
+                    ctx.lineTo(s.x, s.y + s.h);
+                } else {
+                    ctx.moveTo(s.x + s.w, s.y);
+                    ctx.lineTo(s.x, s.y + s.h / 2);
+                    ctx.lineTo(s.x + s.w, s.y + s.h);
+                }
+                ctx.fill();
+            });
+
+            // Игрок (квадратик со свечением)
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = player.color;
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0; // Сброс тени
+
+            // Глазки (чтобы было мило)
+            ctx.fillStyle = '#1a1a2e';
+            if (player.vx > 0) { // Летит вправо
+                ctx.fillRect(player.x + 2, player.y - 5, 4, 4);
+                ctx.fillRect(player.x + 2, player.y + 3, 4, 4);
+            } else { // Летит влево
+                ctx.fillRect(player.x - 6, player.y - 5, 4, 4);
+                ctx.fillRect(player.x - 6, player.y + 3, 4, 4);
+            }
+        }
+
+        // Запуск
+        resetGame();
+    </script>
+</body>
+</html>
